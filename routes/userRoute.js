@@ -1,6 +1,5 @@
 import {Router} from 'express';
 import { userController } from '../controller/index.js';
-import { isValidToken } from '../middleware/isValidToken.js';
 
 
 const userRouter = Router()
@@ -12,6 +11,10 @@ userRouter
 
     userRouter
     .route("/activate-user")
-    .post(isValidToken, userController.activateUser)
+    .post( userController.activateUser)
+
+    userRouter
+    .route("/login")
+    .post( userController.loginUser)
 
 export default userRouter

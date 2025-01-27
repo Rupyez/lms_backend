@@ -16,6 +16,8 @@ export const getMyProfile = async({id}) => User.findById(id);
 
 export const getSpecificUserByAny = async({email}) =>User.findOne({email})
 
+export const getUserById = async({userId}) => User.findOne({userId})
+
 export const deleteSpecificUserService = async ({ id }) => User.findByIdAndDelete(id);
 
 export const updateSpecificUSerService = async ({ id, body }) =>

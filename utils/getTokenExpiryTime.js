@@ -1,18 +1,15 @@
 import jwt from "jsonwebtoken"
-let getTokenExpiryTime = (token) => {
-    try {
-        const decodedToken = jwt.decode(token)
-        if (!decodedToken || !decodedToken.exp) {
-            console.error("Invalid token or missing expiry time")
-            
-        }
 
-        return new Date(decodedToken.exp * 1000); 
-        // const expiryTime = new Date(decodedToken.exp * 1000); // Convert UNIX timestamp to JavaScript Date object
-        // return expiryTime;
+const getTokenExpiryTime = (token) => {
+    try {
+        const decodedToken = jwt.decode(token);
+        if (!decodedToken || !decodedToken.exp) {
+            return new Date(Date.now() + 24 * 60 * 60 * 1000); // Default to 24 hours from now if no expiry
+        }
+        return new Date(decodedToken.exp * 1000);
     } catch (error) {
         console.error("Error decoding token or retrieving expiry time:", error);
-       return null;
+        return new Date(Date.now() + 24 * 60 * 60 * 1000); // Default to 24 hours from now
     }
 }
 

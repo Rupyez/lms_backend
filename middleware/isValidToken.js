@@ -2,47 +2,67 @@ import { secretKey } from "../config/config.js";
 import { HttpStatus } from "../constant/constant.js";
 import { TokenData } from "../schemaModel/model.js";
 import { userService } from "../services/index.js";
-import { verifyToken } from "../utils/token.js";
+import jwt from 'jsonwebtoken';
 import catchAsyncErrors from "./catchAsyncError.js";
 
+const extractToken = (authorization) => {
+    if (!authorization) {
+        throw new Error('No authorization header provided');
+    }
 
+    const [bearer, token] = authorization.split(' ');
 
-export let isValidToken = catchAsyncErrors(async (req, res, next) => {
-    let { authorization = "" } = req.headers;
+    if (bearer !== 'Bearer' || !token) {
+        throw new Error('Invalid authorization format. Use: Bearer <token>');
+    }
 
-    let arr = authorization.split(" ");
-    let token = arr[1] || "";
+    return token;
+};
 
-    // check if token starts with Bearear and check if token exist
-    if (arr[0] === "Bearer" && token) {
-        //verify weather the token is valid or not using jwt
-        //it check weather the token is made from secretkey and check weather the expiry time reach
-        let info = await verifyToken(token, secretKey);
+export const isValidToken = catchAsyncErrors(async (req, res, next) => {
+    try {
+        // Extract token from header
+        const token = extractToken(req.headers.authorization || '');
 
-        let user = await userService.getSpecificAuthUser({
-            id: info.userId,
-        });
-        let tok = await TokenData.findOne({ token: token });
+        const decodedToken = await jwt.verify(token, secretKey);
 
-        // check if the given token is in our database
-        if (tok === null) {
-            let error = new Error("Please enter valid token");
-            error.statusCode = HttpStatus.UNAUTHORIZED;
-            throw error;
-        } else {
-            req.token = {
-                token: token,
-                tokenId: tok._id,
-            };
-            req.info = {
-                ...info,
-                roles: user.roles,
-            };
-            next();
+        if (!decodedToken || !decodedToken.userId) {
+            return res.status(HttpStatus.UNAUTHORIZED).json({
+                success: false,
+                message: 'Invalid or expired token'
+            });
         }
-    } else {
-        let error = new Error("Token is not valid");
-        error.statusCode = 401;
-        throw error;
+
+        const tokenExists = await TokenData.findOne({ token });
+        if (!tokenExists) {
+            return res.status(HttpStatus.UNAUTHORIZED).json({
+                success: false,
+                message: 'Token has been revoked or is invalid'
+            });
+        }
+
+        // Get user details
+        const user = await userService.getSpecificAuthUser({
+            id: decodedToken.userId,
+        });
+
+        if (!user) {
+            return res.status(HttpStatus.UNAUTHORIZED).json({
+                success: false,
+                message: 'User not found or unauthorized'
+            });
+        }
+
+        // Attach user and token info to request
+        req.user = user;
+        req.token = token;
+        req.tokenData = tokenExists;
+
+        next();
+    } catch (error) {
+        return res.status(HttpStatus.UNAUTHORIZED).json({
+            success: false,
+            message: error.message || 'Authentication failed'
+        });
     }
 });

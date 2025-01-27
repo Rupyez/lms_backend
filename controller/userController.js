@@ -2,186 +2,200 @@ import { expiryIn, secretKey, tokenTypes } from "../config/config.js";
 import { HttpStatus } from "../constant/constant.js";
 import successResponseData from "../helper/successResponseData.js";
 import catchAsyncErrors from "../middleware/catchAsyncError.js";
-
-
 import { userService, tokenService } from "../services/index.js";
 import getTokenExpiryTime from "../utils/getTokenExpiryTime.js";
-import { hashPassword } from "../utils/hashFunction.js";
+import {  comparePassword, hashPassword } from "../utils/hashFunction.js";
 import { throwError } from "../utils/throwError.js";
 import { sendEmailToVerify } from "../services/emailService.js";
 import { User } from "../schemaModel/model.js";
-import { createActivationToken, generateToken } from "../utils/token.js";
+import { createActivationToken, generateToken, verifyToken } from "../utils/token.js";
+import bcrypt from 'bcryptjs';
 
 export const createUser = catchAsyncErrors(async (req, res, next) => {
-  let body = { ...req.body };
-  body.isVerified = false;
+  const body = { ...req.body };
+  const { email } = body;
 
-  //check if user already exist or not
-  let email = body.email;
-  let user = await userService.getSpecificUserByAny({ email });
-  let getAllUser = await User.find({}).countDocuments(); // Correct method
-  body.userId = (getAllUser || 0) + 1;
+  const existingUser = await userService.getSpecificUserByAny({ email });
+  console.log('Existing user:', existingUser === null);
 
-  if (!body.roles || body.roles.some((role) => role.trim() === "")) {
-    body.roles = ["student"]; // Set default role as "student"
-  }
-
-  if (user) {
+  if (existingUser !== null) {
     throwError({
-      message: "Email already Exist.",
+      message: "Email already exists...",
       statusCode: HttpStatus.UNAUTHORIZED,
     });
-  } else {
-    let data = await userService.createUserService({ body });
-    delete data._doc.password;
-    let infoObj = { userId: data._id };
-
-    const { token, activationCode } = createActivationToken(data);
-    data.activationCode = activationCode;
-    await data.save();
-
-    let emailToken = await generateToken(infoObj, secretKey, expiryIn);
-    console.log(token);
-
-    let tokenData = {
-      token: token,
-      userId: data._id,
-      type: tokenTypes.VERIFY_EMAIL,
-      expiration: getTokenExpiryTime(token).toLocaleString(),
-    };
-
- 
-
-    await tokenService.createTokenService({ data: tokenData });
-    await sendEmailToVerify({
-      email,
-      token,
-      firstName: body.firstName,
-      lastName: body.firstName,
-      activationCode: activationCode,
-    });
-
-    successResponseData({
-      res,
-      message: "Verification mail has been sent.",
-      statusCode: HttpStatus.CREATED,
-      data,
-    });
   }
+
+  const hashedPassword = await hashPassword(body.password);
+  const userCount = await User.find({}).countDocuments();
+  
+  body.userId = (userCount || 0) + 1;
+  body.password = hashedPassword;
+  body.roles = (!body.roles || body.roles.some(role => role.trim() === "")) 
+    ? ["student"] 
+    : body.roles;
+
+  const userData = await userService.createUserService({ body });
+
+  const { token, activationCode } = createActivationToken(userData);
+
+
+  const hashActivationCode = await hashPassword(activationCode, 10);
+  userData.activationCode = hashActivationCode;
+  await userData.save();
+
+  const tokenData = {
+    token,
+    userId: userData._id,
+    type: tokenTypes.VERIFY_EMAIL,
+    expiration: getTokenExpiryTime(token).toLocaleString(),
+  };
+  await tokenService.createTokenService({ data: tokenData });
+
+  await sendEmailToVerify({
+    email,
+    token,
+    firstName: body.firstName,
+    lastName: body.firstName,
+    activationCode,
+  });
+
+  successResponseData({
+    res,
+    message: "Verification mail has been sent.",
+    statusCode: HttpStatus.CREATED,
+    data: userData,
+  });
 });
 
-export const activateUser = catchAsyncErrors(async (req, res, next) => {
-    const userId = req.info ? req.info.userId : null;
-    const tokenId = req.token ? req.token.tokenId : null;
-    const { token, activationCode, password } = req.body;
+export const activateUser = catchAsyncErrors(async (req, res) => {
 
-    
-
-    console.log("Request Info:", req.info);
-
-    if (!userId) {
-        return res.status(HttpStatus.BAD_REQUEST).json({
-          success: false,
-          message: "User ID not found.",
-        });
-      }
-  
-    let passHashedPassowrd = await hashPassword(password);
-
-    if (!token || !activationCode) {
-        return res.status(HttpStatus.BAD_REQUEST).json({
-          success: false,
-          message: "Token and activation code are required.",
-        });
-      }
-
-  //ensure both token and activation code are provided
-
-    const decoded = await verifyToken(token, secretKey, activationCode);
-
-        // Ensure `decoded.user.id` exists
-        if (!decoded || !decoded.user || !decoded.user.id) {
-            throw new Error("Invalid token payload. Missing user ID.");
-          }
-
-    // const user = await userService.updateSpecificUSerService(
-    //   decoded.email,
-    //   { isVerified: true }
-    // );
+  const token = req?.query?.token || req?.body?.token; 
+  const activationCode = req?.body?.activationCode;
 
 
-    const data = await userService.updateSpecificUSerService({
-        id: decoded.user.id, id, // Pass the user ID
-        body: { isVerified: true , password:passHashedPassowrd}, // Fields to update
-      }); 
+  if (!token || !activationCode) {
 
-      delete data._doc.password;
+    if (Number(activationCode) !== Number(activationCode)) {
+      throw new Error("Invalid activation code");
+    }
 
-      if (tokenId) {
-        await tokenService.deleteSpecificTokenService({ id: tokenId });
-      }
-
-    return res.status(HttpStatus.OK).json({
-      success: true,
-      message: "User activated successfully.",
-      data,    
+    return res.status(HttpStatus.BAD_REQUEST).json({
+      success: false,
+      message: "Token and activation code are required.",
     });
- 
+  }
+
+
+  const veryfyTOken = await verifyToken(token, secretKey);
+
+  if (!veryfyTOken) {
+    return res.status(HttpStatus.BAD_REQUEST).json({
+      success: false,
+      message: "Invalid token or activation code.",
+    });
+  }
+
+
+  const findUser = await userService.getUserById({userId: veryfyTOken.user.userId})
+  if(!findUser){
+    return res.status(HttpStatus.BAD_REQUEST).json({
+      success: false,
+      message: "User not found.",
+    });
+  }
+
+  const isActivationCodeValid = await bcrypt.compare(activationCode, findUser.activationCode)
+
+  if(!isActivationCodeValid){
+    return res.status(HttpStatus.BAD_REQUEST).json({
+      success: false,
+      message: "Invalid activation code.",
+    });
+  }
+
+
+  const data = await userService.updateSpecificUSerService({
+    id: veryfyTOken.user.id,
+    body: { isVerified: true },
+  });
+
+  return res.status(HttpStatus.OK).json({
+    success: true,
+    message: "User activated successfully.",
+    data,
+  });
+
 });
 
 
 //login user
-export let loginUser = catchAsyncErrors(async(req, res, next)=>{
-    let email = req.body.email;
-    let password = req.body.password;
-    let user = await userService.getSpecificUserByAny({ email });
-    if (user === null) {
-        throwError({
-            message: "Please enter valid email or password.",
-            statusCode: 401,
-        });
-    } else {
-        let isValidPassword = await comparePassword(password, user.password);
-        if (isValidPassword) {
-            let infoObj = { userId: user._id, role: user.role };
-            let token = await generateToken(infoObj, secretKey, expiryIn);
+export const loginUser = catchAsyncErrors(async (req, res) => {
+  const { email, password } = req.body;
 
-            let data = {
-                token: token,
-                userId: user._id,
-                type: tokenTypes.ACCESS,
-                expiration: getTokenExpiryTime(token).toLocaleString(),
-            };
-            console.log(data)
-            await tokenService.createTokenService({ data });
+  // Find user by email
+  const user = await userService.getSpecificUserByAny({ email });
+  
+  if (!user) {
+    throwError({
+      message: "Invalid email or password",
+      statusCode: HttpStatus.UNAUTHORIZED,
+    });
+  }
 
-            successResponseData({
-                res,
-                message: "Login Successfully.",
-                statusCode: HttpStatus.OK,
-                data: {
-                    token: token,
-                    user: user,
-                },
-            });
-        } else {
-            throwError({
-                message: "Please enter valid email or password.",
-                statusCode: 401,
-            });
-        }
-    }
-    
-})
+  // Verify password
+  const isValidPassword = await comparePassword(password, user.password);
+  
+  if (!isValidPassword) {
+    throwError({
+      message: "Invalid email or password",
+      statusCode: HttpStatus.UNAUTHORIZED,
+    });
+  }
 
+  // Generate access token
+  const tokenPayload = { 
+    userId: user.userId, 
+    role: user.role 
+  };
+  
+  const { token } = await generateToken(tokenPayload, secretKey, expiryIn);
+  const expiryTime = getTokenExpiryTime(token);
+
+  // Save token in database
+  const tokenData = {
+    token,
+    userId: user.userId,
+    type: tokenTypes.ACCESS,
+    expiration: expiryTime.toLocaleString(),
+  };
+
+  await tokenService.createTokenService({ data: tokenData });
+
+  // Return success response
+  successResponseData({
+    res,
+    message: "Login successful",
+    statusCode: HttpStatus.OK,
+    data: {
+      token,
+      user: {
+        userId: user.userId,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        roles: user.roles
+      }
+    },
+  });
+});
 
 // logout User
-export const logoutUser = catchAsyncErrors(async(req, res, next)=>{
-    await tokenService.deleteSpecificTokenService({id:req.token.tokenId})
+export const logoutUser = catchAsyncErrors(async (req, res, next) => {
+  await tokenService.deleteSpecificTokenService({ id: req.token.tokenId })
 
-    successResponseData({
-        res,
-        message: "Logout successfully.",
-        statusCode: HttpStatus.OK
-    })
+  successResponseData({
+    res,
+    message: "Logout successfully.",
+    statusCode: HttpStatus.OK
+  })
 })

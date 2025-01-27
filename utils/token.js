@@ -1,58 +1,57 @@
 import jwt from "jsonwebtoken";
-import {HttpStatus} from '../constant/constant.js'
+import { HttpStatus } from '../constant/constant.js'
 
 
 
-export const generateToken = async(
-  infoObj ={},
+export const generateToken = async (
+  infoObj = {},
   secretKey = "",
   expiresIn = "365d",
   includeActivationCode = false
-) =>{
+) => {
 
-    let expiresInfo = {
+  let expiresInfo = {
     expiresIn: expiresIn,
   };
 
-  try{
-  if(includeActivationCode){
-    infoObj.activationCode = Math.floor(1000 + Math.random() * 9000).toString();
+  try {
+    if (includeActivationCode) {
+      infoObj.activationCode = Math.floor(1000 + Math.random() * 9000).toString();
+    }
+
+    const token = await jwt.sign(infoObj, secretKey, expiresInfo)
+
+    //return the token and activation code if included
+    return includeActivationCode
+      ? { token, activationCode: infoObj.activationCode } : { token };
+
+  } catch (error) {
+    const err = new Error(error.message);
+    err.statusCode = 400;
+    throw err;
   }
-
-  const token = await jwt.sign(infoObj, secretKey, expiresInfo)
-
-  //return the token and activation code if included
-  return includeActivationCode
-  ? {token, activationCode:infoObj.activationCode} :{token};
-
-}catch(error){
-  const err = new Error(error.message);
-  err.statusCode = 400;
-  throw err;
-}
 }
 
 
-// 2nd verify token
-export const verifyToken = async (token="", secretKey="", activationCode="") => {
-    try{
+export const verifyToken = async (token = "", secretKey = "") => {
+  try {
 
-       // Ensure the activation code is provided
-    if (!activationCode) {
-      throw new Error("Activation code is required.");
+   
+    const infoObj = await jwt.verify(token, secretKey);
+
+    console.log(infoObj)
+
+    if (!infoObj) {
+      throw new Error("Invalid token or expired token")
     }
-        const infoObj = await jwt.verify(token, secretKey)
 
-        if (Number(infoObj.activationCode) !== Number(activationCode)) {
-          throw new Error("Invalid activation code");
-        }
-        return infoObj    
+    return infoObj
 
-    }catch(error){
-        let err = new Error(error.message);
-        error.statusCode = HttpStatus.UNAUTHORIZED
-        throw err;
-    }
+  } catch (error) {
+    let err = new Error(error.message);
+    error.statusCode = HttpStatus.UNAUTHORIZED
+    throw err;
+  }
 };
 
 

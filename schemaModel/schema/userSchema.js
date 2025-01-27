@@ -33,11 +33,15 @@ let userSchema = Schema({
         }
     },
 
-    phoneNumber:{
+    email:{
         type:String,
         lowercase:true,
         trim:true,
-        unique:[true, "Email already exist"],
+        unique:[true, "Email already exist..."],
+    },
+
+    phoneNumber:{
+        type:String
     },
 
     roles: [{
@@ -61,6 +65,15 @@ let userSchema = Schema({
         trim: true,
         unique: true
     },
+    password:{
+        type:String,
+        trim:true,
+        minlength:6
+
+    },
+    activationCode:{
+        type:String
+    }
 }, { timestamps: true })
 
 export default userSchema
